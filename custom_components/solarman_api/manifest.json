@@ -1,9 +1,10 @@
 {
   "domain": "solarman_api",
-  "name": "Solarman Open API",
+  "name": "Solarman API",
   "version": "0.0.1",
   "codeowners": ["@norberttech"],
   "config_flow": true,
+  "dependencies": ["recorder"],
   "documentation": "https://github.com/norberttech/ha-solarman-api",
   "integration_type": "hub",
   "iot_class": "cloud_polling",

@@ -29,10 +29,10 @@ jobs:
         # newest PyPI release so we catch upstream breakage early.
         deps: [locked, latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.13"
           enable-cache: true

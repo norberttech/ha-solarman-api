@@ -72,16 +72,17 @@ async def test_live_flow() -> None:
         for device in devices:
             sn = device["deviceSn"]
             dtype = device.get("deviceType", "?")
-            data = await client.current_data(sn)
-            assert isinstance(data, list)
-            returned_keys = {item["key"] for item in data if "key" in item}
+            response = await client.current_data(sn)
+            assert isinstance(response, dict)
+            data_list = list(response.get("dataList") or [])
+            returned_keys = {item["key"] for item in data_list if "key" in item}
             device_types_seen.add(dtype)
 
             expected = expected_keys.get(dtype, set())
             missing = expected - returned_keys
             extras = returned_keys - expected if expected else set()
 
-            summary = f"{len(data)} keys"
+            summary = f"{len(data_list)} keys"
             if expected:
                 summary += f", {len(expected)} declared, {len(missing)} missing, {len(extras)} unmapped"
             print(f"[live]   {dtype:<9} {sn}: {summary}")

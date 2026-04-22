@@ -8,6 +8,7 @@ from custom_components.solarman_api.statistics import (
     MAX_WINDOW_DAYS,
     _build_stat_rows,
     _parse_collect_time,
+    historical_statistic_id,
 )
 
 
@@ -37,8 +38,11 @@ def test_build_stat_rows_fresh_install_starts_from_zero() -> None:
         (_utc(2026, 4, 3), 8.0),
     ]
     rows = _build_stat_rows(days, last_sum=0.0, last_start=None)
+    # state and sum both carry the cumulative running total so the recorder
+    # sees a monotonically increasing energy series; writing daily deltas
+    # into `state` produced boundary discontinuities with the live sensor.
     assert [r["sum"] for r in rows] == [10.0, 22.5, 30.5]
-    assert [r["state"] for r in rows] == [10.0, 12.5, 8.0]
+    assert [r["state"] for r in rows] == [10.0, 22.5, 30.5]
     assert [r["start"] for r in rows] == [d for d, _ in days]
 
 
@@ -68,7 +72,7 @@ def test_build_stat_rows_skips_already_imported_days() -> None:
     # Only 4/3 should be imported; running sum continues from 100.
     assert len(rows) == 1
     assert rows[0]["start"] == _utc(2026, 4, 3)
-    assert rows[0]["state"] == 8.0
+    assert rows[0]["state"] == 108.0
     assert rows[0]["sum"] == 108.0
 
 
@@ -96,6 +100,19 @@ def test_parse_collect_time_invalid_returns_none() -> None:
     assert _parse_collect_time(None) is None
     assert _parse_collect_time("not-a-date") is None
     assert _parse_collect_time("") is None
+
+
+def test_historical_statistic_id_uses_domain_prefixed_external_namespace() -> None:
+    """External statistic_id must be `{domain}:{object_id}` — HA rejects
+    anything else for async_add_external_statistics and this format also
+    keeps historical imports from colliding with live sensor entity-stats.
+    """
+    sid = historical_statistic_id("SP1ES110M72141", "Et_ge0")
+    assert sid == "solarman_api:sp1es110m72141_et_ge0_historical"
+    # Must contain a ':' (external-stats format) and not look like an
+    # entity_id (`sensor.foo`) which would collide with the live sensor.
+    assert ":" in sid
+    assert not sid.startswith("sensor.")
 
 
 def test_max_window_days_respects_api_cap() -> None:

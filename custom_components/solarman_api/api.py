@@ -93,12 +93,16 @@ class SolarmanClient:
         )
         return list(data.get("deviceListItems") or [])
 
-    async def current_data(self, device_sn: str) -> list[dict[str, Any]]:
-        """Return the current `dataList` for a single device."""
-        data = await self._request(
+    async def current_data(self, device_sn: str) -> dict[str, Any]:
+        """Return the full `currentData` response for a single device.
+
+        Callers read `dataList` for the key/value pairs and `collectionTime`
+        for the timestamp of the reading. Both are top-level fields in the
+        Solarman response.
+        """
+        return await self._request(
             "POST", "/device/v1.0/currentData", json={"deviceSn": device_sn}
         )
-        return list(data.get("dataList") or [])
 
     async def historical(
         self,

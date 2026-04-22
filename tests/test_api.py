@@ -86,7 +86,7 @@ async def test_current_data_success(session):
             },
         )
         result = await client.current_data("SN1")
-    assert result == [{"key": "PVTP", "value": "123", "unit": "W"}]
+    assert result["dataList"] == [{"key": "PVTP", "value": "123", "unit": "W"}]
 
 
 @pytest.mark.asyncio
@@ -103,7 +103,7 @@ async def test_401_triggers_single_reauth(session):
         result = await client.current_data("SN1")
 
     assert client.access_token == "fresh"
-    assert result == [{"key": "X", "value": "1"}]
+    assert result["dataList"] == [{"key": "X", "value": "1"}]
 
 
 @pytest.mark.asyncio
@@ -139,7 +139,7 @@ async def test_429_respects_retry_after(monkeypatch, session):
         result = await client.current_data("SN1")
 
     assert sleeps == [2]
-    assert result == [{"key": "K", "value": "v"}]
+    assert result["dataList"] == [{"key": "K", "value": "v"}]
 
 
 @pytest.mark.asyncio

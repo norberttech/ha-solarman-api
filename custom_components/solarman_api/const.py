@@ -41,6 +41,15 @@ CONF_UPDATE_INTERVAL: Final = "update_interval_minutes"
 
 DeviceTypeLiteral = Literal["INVERTER", "BATTERY", "COLLECTOR"]
 
+# Lifetime cumulative energy counters. Solarman occasionally returns 0 for
+# these when the inverter is briefly offline — dropping those 0 readings in
+# the coordinator (when we have a previous positive value) prevents the
+# recorder from treating the dip as a TOTAL_INCREASING reset and producing
+# spurious negative bars in the Energy dashboard.
+LIFETIME_CUMULATIVE_KEYS: Final[frozenset[str]] = frozenset(
+    {"Et_ge0", "t_gc1", "Et_pu1", "Et_use1", "t_cg_n1", "t_dcg_n1"}
+)
+
 
 @dataclass(frozen=True, kw_only=True)
 class SolarmanSensorDescription(SensorEntityDescription):

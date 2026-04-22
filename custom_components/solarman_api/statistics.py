@@ -12,12 +12,11 @@ from homeassistant.components.recorder.models import (
     StatisticMetaData,
 )
 from homeassistant.components.recorder.statistics import (
-    async_import_statistics,
+    async_add_external_statistics,
     get_last_statistics,
 )
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
 
 from .api import SolarmanApiError, SolarmanClient
 from .const import DOMAIN
@@ -31,13 +30,26 @@ MAX_WINDOW_DAYS = 30
 
 # Historical daily key -> (currentData cumulative-total key, human name).
 HISTORICAL_KEY_MAP: dict[str, tuple[str, str]] = {
-    "generation": ("Et_ge0", "Solar production total"),
-    "grid": ("t_gc1", "Grid export total"),
-    "purchase": ("Et_pu1", "Grid import total"),
-    "consumption": ("Et_use1", "Home consumption total"),
-    "charge": ("t_cg_n1", "Battery charge total"),
-    "discharge": ("t_dcg_n1", "Battery discharge total"),
+    "generation": ("Et_ge0", "Solar production"),
+    "grid": ("t_gc1", "Grid export"),
+    "purchase": ("Et_pu1", "Grid import"),
+    "consumption": ("Et_use1", "Home consumption"),
+    "charge": ("t_cg_n1", "Battery charge"),
+    "discharge": ("t_dcg_n1", "Battery discharge"),
 }
+
+
+def historical_statistic_id(device_sn: str, cd_key: str) -> str:
+    """Build the external statistic_id for an imported historical channel.
+
+    Format is `{domain}:{object_id}` — required by HA for external
+    statistics. Keeping it separate from the live sensor's entity_id
+    (sensor.solarman_inverter_*) prevents the recorder from blending
+    imported daily deltas with the live TOTAL_INCREASING compile, which
+    used to produce spurious negative bars at the boundary.
+    """
+    object_id = f"{device_sn}_{cd_key}_historical".lower().replace("-", "_")
+    return f"{DOMAIN}:{object_id}"
 
 
 def _parse_collect_time(raw: Any) -> datetime | None:
@@ -80,6 +92,12 @@ def _build_stat_rows(
 ) -> list[StatisticData]:
     """Turn (day, daily_kwh) pairs into HA statistic rows with a running sum.
 
+    `state` is set to the running cumulative total at end of each day — the
+    shape HA's recorder expects for an energy statistic whose `sum` grows
+    monotonically. Writing the daily delta into `state` (as this function
+    used to do) creates a boundary discontinuity when a live TOTAL_INCREASING
+    sensor shares the statistic_id.
+
     Skips days at or before `last_start` so re-running is idempotent.
     Pure function: no HA, no I/O — easy to unit-test.
     """
@@ -90,7 +108,7 @@ def _build_stat_rows(
             continue
         running_sum += daily_value
         rows.append(
-            StatisticData(start=day_start, state=daily_value, sum=running_sum)
+            StatisticData(start=day_start, state=running_sum, sum=running_sum)
         )
     return rows
 
@@ -104,6 +122,12 @@ async def async_import_historical_statistics(
     target_device_sn: str | None = None,
 ) -> dict[str, Any]:
     """Fetch daily energy totals for the given date range and import them.
+
+    Writes each channel to its own external statistic_id
+    (`solarman_api:<deviceSn>_<cdKey>_historical`). Users can then add those
+    statistics as sources in the HA Energy dashboard if they want historical
+    backfill alongside the live sensor. Imported data will not collide with
+    the live sensor's own TOTAL_INCREASING stats compile.
 
     Returns a summary dict `{channel: imported_rows}` plus `total`. Raises
     nothing; errors per window are logged and the function continues.
@@ -173,7 +197,6 @@ async def async_import_historical_statistics(
                 continue
             daily_by_key.setdefault(key, []).append((day_start, value))
 
-    ent_reg = er.async_get(hass)
     recorder = get_instance(hass)
     per_channel: dict[str, int] = {}
 
@@ -183,16 +206,7 @@ async def async_import_historical_statistics(
             per_channel[historical_key] = 0
             continue
 
-        unique_id = f"{device_sn}_{cd_key}"
-        statistic_id = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
-        if statistic_id is None:
-            _LOGGER.warning(
-                "Entity %s not registered yet; skipping channel %s",
-                unique_id,
-                historical_key,
-            )
-            per_channel[historical_key] = 0
-            continue
+        statistic_id = historical_statistic_id(device_sn, cd_key)
 
         last_stats = await recorder.async_add_executor_job(
             get_last_statistics, hass, 1, statistic_id, True, {"sum"}
@@ -216,13 +230,13 @@ async def async_import_historical_statistics(
             has_mean=False,
             mean_type=StatisticMeanType.NONE,
             has_sum=True,
-            name=display_name,
-            source="recorder",
+            name=f"{display_name} (historical)",
+            source=DOMAIN,
             statistic_id=statistic_id,
             unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
             unit_class="energy",
         )
-        async_import_statistics(hass, metadata, new_rows)
+        async_add_external_statistics(hass, metadata, new_rows)
         per_channel[historical_key] = len(new_rows)
         _LOGGER.debug(
             "Imported %d days for %s (%s)",

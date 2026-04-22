@@ -1,0 +1,38 @@
+name: live
+
+# Weekly smoke test against the real Solarman Open API. Separate from the
+# main test workflow so we don't burn API quota on every push/PR and so a
+# transient upstream outage can't block merges.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"  # Mondays 06:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: live
+  cancel-in-progress: false
+
+jobs:
+  live:
+    name: Live API smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --group dev --frozen
+
+      - name: Run live tests
+        env:
+          SOLARMAN_EMAIL: ${{ secrets.SOLARMAN_EMAIL }}
+          SOLARMAN_PASSWORD: ${{ secrets.SOLARMAN_PASSWORD }}
+          SOLARMAN_APP_ID: ${{ secrets.SOLARMAN_APP_ID }}
+          SOLARMAN_APP_SECRET: ${{ secrets.SOLARMAN_APP_SECRET }}
+        run: .venv/bin/pytest tests/test_live.py -sv

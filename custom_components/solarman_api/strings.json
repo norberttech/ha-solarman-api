@@ -1,0 +1,40 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "data": {
+          "email": "Email",
+          "password": "Password",
+          "app_id": "App ID",
+          "app_secret": "App Secret",
+          "update_interval_minutes": "Update interval (minutes)"
+        }
+      },
+      "reauth_confirm": {
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect",
+      "invalid_auth": "Invalid authentication",
+      "no_stations": "No stations found on this account",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This account is already configured",
+      "reauth_successful": "Re-authentication was successful"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "update_interval_minutes": "Update interval (minutes)"
+        },
+        "description": "Solarman uploads cloud data roughly every 5 minutes, so polling faster is wasted. Allowed range: 5–60 minutes."
+      }
+    }
+  }
+}

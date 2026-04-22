@@ -1,0 +1,57 @@
+name: validate-release
+
+# Fails the workflow if the version declared in
+# custom_components/solarman_api/manifest.json does not match the git tag
+# being released. HACS refuses to install integrations where the manifest
+# version disagrees with the release tag, so catch the mismatch early.
+
+on:
+  push:
+    tags:
+      - "v*"
+  release:
+    types: [published, created, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  check-manifest-version:
+    name: Check manifest.json version matches tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve tag name
+        id: tag
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            tag="${GITHUB_REF#refs/tags/}"
+          elif [[ -n "${{ github.event.release.tag_name }}" ]]; then
+            tag="${{ github.event.release.tag_name }}"
+          else
+            echo "Could not resolve tag from event"; exit 1
+          fi
+          # Strip leading 'v' if present: v1.2.3 -> 1.2.3
+          version="${tag#v}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Tag: ${tag}"
+          echo "Expected manifest version: ${version}"
+
+      - name: Read manifest.json version
+        id: manifest
+        run: |
+          version=$(jq -r .version custom_components/solarman_api/manifest.json)
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "manifest.json version: ${version}"
+
+      - name: Compare
+        run: |
+          tag_version="${{ steps.tag.outputs.version }}"
+          manifest_version="${{ steps.manifest.outputs.version }}"
+          if [[ "${tag_version}" != "${manifest_version}" ]]; then
+            echo "::error::manifest.json version (${manifest_version}) does not match release tag (${{ steps.tag.outputs.tag }} => ${tag_version}). Update custom_components/solarman_api/manifest.json before tagging."
+            exit 1
+          fi
+          echo "OK: manifest version ${manifest_version} matches tag ${{ steps.tag.outputs.tag }}"

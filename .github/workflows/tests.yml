@@ -1,0 +1,52 @@
+name: tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Daily run to catch Home Assistant releases that break the integration.
+    # HA ships every ~3 weeks; a daily cron means we hear about a break
+    # within a day of upstream release instead of when a user files an issue.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+# Cancel an in-progress run when a new commit lands on the same PR/branch.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Unit tests (${{ matrix.deps }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # locked: install from uv.lock — reproducible baseline.
+        # latest: ignore the lock for homeassistant + phacc and pull the
+        # newest PyPI release so we catch upstream breakage early.
+        deps: [locked, latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install dependencies (locked)
+        if: matrix.deps == 'locked'
+        run: uv sync --group dev --frozen
+
+      - name: Install dependencies (latest HA)
+        if: matrix.deps == 'latest'
+        run: >-
+          uv sync --group dev
+          --upgrade-package homeassistant
+          --upgrade-package pytest-homeassistant-custom-component
+
+      - name: Run unit tests
+        run: .venv/bin/pytest tests/ --ignore=tests/test_live.py -v

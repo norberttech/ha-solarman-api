@@ -1,0 +1,70 @@
+fetch_historical:
+  name: Fetch historical data
+  description: Query the Solarman Open API /device/v1.0/historical endpoint for one or all devices.
+  fields:
+    device_sn:
+      name: Device serial number
+      description: Limit the query to a single device. Defaults to every inverter and battery on the station.
+      required: false
+      example: SP1ES110M72141
+      selector:
+        text:
+    start:
+      name: Start date
+      description: Inclusive start date (YYYY-MM-DD).
+      required: true
+      selector:
+        date:
+    end:
+      name: End date
+      description: Inclusive end date (YYYY-MM-DD).
+      required: true
+      selector:
+        date:
+    time_type:
+      name: Time granularity
+      description: 1 = five-minute samples within a day, 2 = daily samples, 3 = monthly samples.
+      required: false
+      default: 2
+      selector:
+        select:
+          options:
+            - label: "5-minute samples (time_type=1)"
+              value: "1"
+            - label: "Daily samples (time_type=2)"
+              value: "2"
+            - label: "Monthly samples (time_type=3)"
+              value: "3"
+
+import_historical_statistics:
+  name: Import historical statistics
+  description: >
+    Backfill HA long-term statistics (for the Energy Dashboard) from the
+    Solarman historical endpoint. Covers: solar production, grid import/export,
+    home consumption, battery charge/discharge. Safe to re-run; already-imported
+    days are skipped. Solarman caps each query at 31 days, so wider ranges are
+    chunked automatically.
+  fields:
+    days:
+      name: Days to backfill
+      description: How many days of daily totals to import, ending at the end date.
+      required: false
+      default: 180
+      selector:
+        number:
+          min: 1
+          max: 365
+          mode: box
+    end:
+      name: End date
+      description: Inclusive last day to import. Defaults to yesterday.
+      required: false
+      selector:
+        date:
+    device_sn:
+      name: Device serial number
+      description: Limit to a specific inverter serial number. Defaults to the first inverter on the station.
+      required: false
+      example: SP1ES110M72141
+      selector:
+        text:

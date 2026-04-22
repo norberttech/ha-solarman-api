@@ -1,0 +1,28 @@
+version: 2
+
+updates:
+  # Keep GitHub Actions (checkout, setup-uv, ...) current. Actions rarely
+  # have breaking changes between minor versions, so group everything into
+  # one PR per week to minimise noise.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Python dependencies via uv (reads pyproject.toml + uv.lock). Group
+  # minor/patch bumps together; surface majors as individual PRs so they
+  # get proper review.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    groups:
+      python-minor-patch:
+        update-types: ["minor", "patch"]

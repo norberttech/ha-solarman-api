@@ -1,13 +1,13 @@
 {
   "domain": "solarman_api",
   "name": "Solarman API",
-  "version": "0.0.1",
+  "after_dependencies": ["recorder"],
   "codeowners": ["@norberttech"],
   "config_flow": true,
-  "dependencies": ["recorder"],
   "documentation": "https://github.com/norberttech/ha-solarman-api",
   "integration_type": "hub",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/norberttech/ha-solarman-api/issues",
-  "requirements": ["aiohttp>=3"]
+  "requirements": ["aiohttp>=3"],
+  "version": "0.0.1"
 }

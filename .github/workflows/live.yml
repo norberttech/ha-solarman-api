@@ -1,9 +1,5 @@
 name: live
 
-# Weekly smoke test against the real Solarman Open API. Separate from the
-# main test workflow so we don't burn API quota on every push/PR and so a
-# transient upstream outage can't block merges.
-
 on:
   schedule:
     - cron: "0 6 * * 1"  # Mondays 06:00 UTC

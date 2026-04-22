@@ -2,17 +2,13 @@ name: tests
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
-    branches: [main, master]
+    branches: [main]
   schedule:
-    # Daily run to catch Home Assistant releases that break the integration.
-    # HA ships every ~3 weeks; a daily cron means we hear about a break
-    # within a day of upstream release instead of when a user files an issue.
     - cron: "0 6 * * *"
   workflow_dispatch:
 
-# Cancel an in-progress run when a new commit lands on the same PR/branch.
 concurrency:
   group: tests-${{ github.ref }}
   cancel-in-progress: true
@@ -24,9 +20,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # locked: install from uv.lock — reproducible baseline.
-        # latest: ignore the lock for homeassistant + phacc and pull the
-        # newest PyPI release so we catch upstream breakage early.
         deps: [locked, latest]
     steps:
       - uses: actions/checkout@v4

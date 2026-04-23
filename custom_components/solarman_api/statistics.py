@@ -1,19 +1,23 @@
-"""Import energy totals from the Solarman historical endpoint into HA long-term statistics.
+"""Import energy totals from the Solarman historical endpoint into HA statistics.
 
-Two granularities written:
+Three granularities written:
 
-- **Daily rows** for every completed day in the requested window (yesterday
-  and earlier). Each row carries that day's total production/consumption.
-- **Hourly rows** for the current day from 00:00 UTC up to the last
-  completed hour, aggregated from the 5-minute snapshots Solarman returns
-  via `time_type=1`. This lets the Energy dashboard show today's bars
-  immediately after a fresh install, before the live TOTAL_INCREASING
-  compile has had time to run.
+- **Daily rows** (long-term `statistics` table) for every completed day in
+  the requested window. Each row carries that day's total.
+- **Hourly rows** (long-term) for today from 00:00 UTC up to the last
+  completed hour, aggregated from Solarman's 5-minute snapshots.
+- **5-minute rows** (short-term `statistics_short_term` table) for today's
+  same 5-minute snapshots. This is the one that actually prevents the
+  cache-race: HA's hourly rollup query runs
+  `_compile_hourly_statistics_last_sum_stmt` against `StatisticsShortTerm`
+  and writes the returned sum verbatim into the long-term row, overwriting
+  whatever we imported. Without populating short-term, the rollup reads 0
+  (empty table after clear) and dumps that into long-term.
 
 All rows land on the live sensor's `sensor.<sn>_<key>_total` statistic_id
 so the Energy dashboard picks them up without extra user configuration.
-Running sums and states are chained daily → hourly → live compile so the
-boundaries produce no spikes.
+Running sums and states are chained daily → hourly → 5-minute → live
+compile so every boundary produces a coherent delta instead of a spike.
 """
 
 from __future__ import annotations
@@ -24,12 +28,15 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from homeassistant.components.recorder import get_instance
+from homeassistant.components.recorder.db_schema import (
+    Statistics,
+    StatisticsShortTerm,
+)
 from homeassistant.components.recorder.models import (
     StatisticData,
     StatisticMeanType,
     StatisticMetaData,
 )
-from homeassistant.components.recorder.statistics import async_import_statistics
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -191,6 +198,61 @@ def _build_today_hourly_rows(
             end_state = prev_state
         running_sum += delta
         rows.append(StatisticData(start=hour_start, state=end_state, sum=running_sum))
+        prev_state = end_state
+    return rows
+
+
+def _bucket_to_5min(
+    samples: list[tuple[datetime, float]],
+    now_utc: datetime,
+) -> list[tuple[datetime, float]]:
+    """Bucket raw Solarman snapshots into `(5min_start_utc, end_state)` pairs.
+
+    Each 5-minute window keeps the latest sample whose timestamp falls
+    inside it. The current (partial) 5-min bucket is skipped so the live
+    recorder can own it.
+    """
+    if not samples:
+        return []
+    ordered = sorted(samples, key=lambda p: p[0])
+    by_bucket: dict[datetime, float] = {}
+    for ts, value in ordered:
+        floored_minute = (ts.minute // 5) * 5
+        bucket = ts.replace(minute=floored_minute, second=0, microsecond=0)
+        by_bucket[bucket] = value
+    current_bucket = now_utc.replace(
+        minute=(now_utc.minute // 5) * 5, second=0, microsecond=0
+    )
+    return [(b, v) for b, v in sorted(by_bucket.items()) if b < current_bucket]
+
+
+def _build_today_short_term_rows(
+    bucket_end_states: list[tuple[datetime, float]],
+    starting_state: float,
+    starting_sum: float,
+) -> list[StatisticData]:
+    """Build 5-minute short-term rows for today, chained from the daily boundary.
+
+    The short-term `statistics_short_term` table is the one HA's hourly
+    rollup reads to find each hour's last sum — whatever it finds there
+    gets written verbatim into the long-term `Statistics` table, blowing
+    away any long-term import that doesn't have matching short-term data.
+
+    Same running-sum logic as `_build_today_hourly_rows`, just at 5-minute
+    granularity instead of hourly. The last 5-minute row of each hour will
+    carry the same cumulative sum as that hour's long-term row, so the
+    rollup's verbatim-copy operation is a no-op instead of a corruption.
+    """
+    rows: list[StatisticData] = []
+    prev_state = starting_state
+    running_sum = starting_sum
+    for bucket_start, end_state in bucket_end_states:
+        delta = end_state - prev_state
+        if delta < 0:
+            delta = 0.0
+            end_state = prev_state
+        running_sum += delta
+        rows.append(StatisticData(start=bucket_start, state=end_state, sum=running_sum))
         prev_state = end_state
     return rows
 
@@ -451,9 +513,25 @@ async def async_import_historical_statistics(
             starting_sum=last_daily_sum,
         )
 
-        all_rows = daily_rows + hourly_rows
-        if not all_rows:
-            per_channel[historical_key] = {"daily": 0, "hourly": 0}
+        # 5-minute short-term rows mirror the same cumulative sums at finer
+        # granularity. Without these, HA's next hourly rollup queries the
+        # short-term table, finds nothing (or zero after a clear), and
+        # overwrites our long-term row with that value — producing the
+        # classic `-(running_sum)` spike we chased for hours.
+        short_term_buckets = _bucket_to_5min(today_samples, now_utc)
+        short_term_rows = _build_today_short_term_rows(
+            short_term_buckets,
+            starting_state=last_daily_state,
+            starting_sum=last_daily_sum,
+        )
+
+        long_term_rows = daily_rows + hourly_rows
+        if not long_term_rows and not short_term_rows:
+            per_channel[historical_key] = {
+                "daily": 0,
+                "hourly": 0,
+                "short_term": 0,
+            }
             continue
 
         metadata = StatisticMetaData(
@@ -466,24 +544,38 @@ async def async_import_historical_statistics(
             unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
             unit_class="energy",
         )
-        async_import_statistics(hass, metadata, all_rows)
+        recorder = get_instance(hass)
+        if long_term_rows:
+            recorder.async_import_statistics(metadata, long_term_rows, Statistics)
+        if short_term_rows:
+            recorder.async_import_statistics(
+                metadata, short_term_rows, StatisticsShortTerm
+            )
         per_channel[historical_key] = {
             "daily": len(daily_rows),
             "hourly": len(hourly_rows),
+            "short_term": len(short_term_rows),
         }
         _LOGGER.debug(
-            "Imported %d daily + %d hourly for %s (%s)",
+            "Imported %d daily + %d hourly + %d short-term for %s (%s)",
             len(daily_rows),
             len(hourly_rows),
+            len(short_term_rows),
             entity_id,
             historical_key,
         )
 
-    total = sum(c["daily"] + c["hourly"] for c in per_channel.values())
+    total = sum(
+        c["daily"] + c["hourly"] + c["short_term"] for c in per_channel.values()
+    )
     _LOGGER.info(
         "Historical import complete: %d rows across %d channels (%s..%s, today=%s)",
         total,
-        sum(1 for c in per_channel.values() if c["daily"] or c["hourly"]),
+        sum(
+            1
+            for c in per_channel.values()
+            if c["daily"] or c["hourly"] or c["short_term"]
+        ),
         start_date,
         end_date,
         include_today,

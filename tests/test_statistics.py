@@ -10,8 +10,10 @@ from custom_components.solarman_api.statistics import (
     HISTORICAL_KEY_MAP,
     MAX_WINDOW_DAYS,
     _aggregate_samples_to_hourly,
+    _bucket_to_5min,
     _build_daily_rows,
     _build_today_hourly_rows,
+    _build_today_short_term_rows,
     _parse_collect_time,
     _parse_epoch,
 )
@@ -188,6 +190,87 @@ def test_parse_epoch_preserves_hour_minute_when_not_snapping() -> None:
     dt = _parse_epoch(1776895383, snap_to_midnight=False)
     assert dt is not None
     assert dt == datetime(2026, 4, 22, 22, 3, 3, tzinfo=timezone.utc)
+
+
+def test_bucket_to_5min_floors_and_keeps_last_in_each_bucket() -> None:
+    samples = [
+        (_utc(2026, 4, 23, 0, 2), 100.0),
+        (_utc(2026, 4, 23, 0, 7), 101.0),
+        (_utc(2026, 4, 23, 0, 9), 102.0),  # last in 00:05 bucket
+        (_utc(2026, 4, 23, 0, 13), 103.0),  # 00:10 bucket
+        (_utc(2026, 4, 23, 0, 22), 104.0),  # 00:20 bucket, current partial — skipped
+    ]
+    rows = _bucket_to_5min(samples, now_utc=_utc(2026, 4, 23, 0, 24))
+    assert rows == [
+        (_utc(2026, 4, 23, 0, 0), 100.0),
+        (_utc(2026, 4, 23, 0, 5), 102.0),
+        (_utc(2026, 4, 23, 0, 10), 103.0),
+    ]
+
+
+def test_last_5min_of_hour_sum_matches_hourly_sum() -> None:
+    """Critical invariant: the short-term row at end of an hour must have
+    the same cumulative sum as the long-term hourly row for that hour.
+
+    HA's `_compile_hourly_statistics` reads the last short-term sum per
+    hour and copies it verbatim into the long-term `Statistics` row. If
+    the two disagree, the rollup overwrites our long-term import with
+    a small value and the Energy dashboard renders a
+    `-(running_sum)` spike on the next hour boundary.
+    """
+    # Six 5-minute samples covering 14:00–14:30 UTC, counter climbing.
+    samples = [
+        (_utc(2026, 4, 23, 14, 0), 43990.0),
+        (_utc(2026, 4, 23, 14, 5), 43990.5),
+        (_utc(2026, 4, 23, 14, 10), 43991.2),
+        (_utc(2026, 4, 23, 14, 15), 43992.0),
+        (_utc(2026, 4, 23, 14, 20), 43992.7),
+        (_utc(2026, 4, 23, 14, 55), 43995.8),  # last in 14:xx range
+    ]
+    now = _utc(2026, 4, 23, 15, 10)
+
+    hourly_buckets = _aggregate_samples_to_hourly(samples, now)
+    five_min_buckets = _bucket_to_5min(samples, now)
+
+    starting_state = 43990.0
+    starting_sum = 3170.0
+
+    hourly_rows = _build_today_hourly_rows(
+        hourly_buckets, starting_state=starting_state, starting_sum=starting_sum
+    )
+    short_term_rows = _build_today_short_term_rows(
+        five_min_buckets, starting_state=starting_state, starting_sum=starting_sum
+    )
+
+    # Hourly row for 14:00 ends at state=43995.8 (last sample in the hour)
+    # and its sum = starting_sum + (43995.8 - 43990.0) = 3175.8
+    assert hourly_rows[-1]["state"] == pytest_approx(43995.8)
+    assert hourly_rows[-1]["sum"] == pytest_approx(3175.8)
+
+    # Last 5-min row in the 14:00 hour must have the SAME sum — that's
+    # the value HA's rollup will copy into long-term. They can't diverge.
+    last_five_min_in_14h = max(
+        (r for r in short_term_rows if r["start"] < _utc(2026, 4, 23, 15, 0)),
+        key=lambda r: r["start"],
+    )
+    assert last_five_min_in_14h["sum"] == pytest_approx(hourly_rows[-1]["sum"])
+    assert last_five_min_in_14h["state"] == pytest_approx(hourly_rows[-1]["state"])
+
+
+def test_build_today_short_term_rows_clamps_counter_decreases() -> None:
+    """Same guard as hourly rows: a mid-stream counter dip shouldn't pull
+    the running sum backwards.
+    """
+    buckets = [
+        (_utc(2026, 4, 23, 0, 0), 100.0),
+        (_utc(2026, 4, 23, 0, 5), 95.0),
+        (_utc(2026, 4, 23, 0, 10), 103.0),
+    ]
+    rows = _build_today_short_term_rows(
+        buckets, starting_state=100.0, starting_sum=50.0
+    )
+    assert [r["state"] for r in rows] == [100.0, 100.0, 103.0]
+    assert [r["sum"] for r in rows] == [50.0, 50.0, 53.0]
 
 
 def test_max_window_days_respects_api_cap() -> None:

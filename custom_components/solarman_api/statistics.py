@@ -73,28 +73,51 @@ def _build_stat_rows(
     days: list[tuple[datetime, float]],
     start_offset: float,
 ) -> list[StatisticData]:
-    """Turn (day, daily_kwh) pairs into HA statistic rows with a running sum.
+    """Turn (day, daily_kwh) pairs into HA statistic rows.
 
-    Each row carries a cumulative running total in both `state` and `sum` —
-    the shape HA's recorder uses to render monotonically increasing energy
-    series and the shape the TOTAL_INCREASING live compile expects when it
-    reads a prior row's `state` as its previous baseline.
+    The shape balances two conflicting requirements the Energy dashboard
+    and the live TOTAL_INCREASING compile put on the same statistic_id:
 
-    `start_offset` shifts the whole series up or down without changing the
-    per-day deltas the Energy dashboard shows. Set it to
-    `live_lifetime_counter - total_of_days` to align the final row with the
-    inverter's current lifetime reading — that way the live sensor's next
-    hourly compile sees a reasonable delta instead of a multi-thousand-kWh
-    jump when it crosses the import boundary.
+    - **Energy dashboard daily bars** come from successive `sum` deltas.
+      For bars to equal the per-day values (and no spike on the earliest
+      day), `sum` has to start at 0 and grow by one daily value per row.
+
+    - **Live boundary compile** compares the newest sensor reading against
+      the last row's `state`. For the delta to be ~zero on the first hourly
+      compile after the import (no multi-thousand-kWh spike on today's first
+      bar), the last row's `state` has to be ≈ the inverter's current
+      lifetime counter.
+
+    Resolution: `sum` runs 0..total_of_days (clean bars). `state` runs
+    start_offset..start_offset+total_of_days (ending at live_lifetime when
+    caller sets `start_offset = live_lifetime - total`). `state` and `sum`
+    diverge — that's fine, HA stores them as independent columns and the
+    dashboard/boundary each read the column they care about.
+
+    A seed row is prepended at `first_day - 1 day` with `sum=0` and
+    `state=start_offset`. The seed's `change` is 0 so it renders nothing on
+    the dashboard; it just establishes the baseline for the first real day.
 
     Pure function: no HA, no I/O — easy to unit-test.
     """
-    rows: list[StatisticData] = []
-    running_sum = start_offset
-    for day_start, daily_value in sorted(days, key=lambda p: p[0]):
+    if not days:
+        return []
+    ordered = sorted(days, key=lambda p: p[0])
+    first_day = ordered[0][0]
+    rows: list[StatisticData] = [
+        StatisticData(
+            start=first_day - timedelta(days=1),
+            state=start_offset,
+            sum=0.0,
+        )
+    ]
+    state_cursor = start_offset
+    running_sum = 0.0
+    for day_start, daily_value in ordered:
+        state_cursor += daily_value
         running_sum += daily_value
         rows.append(
-            StatisticData(start=day_start, state=running_sum, sum=running_sum)
+            StatisticData(start=day_start, state=state_cursor, sum=running_sum)
         )
     return rows
 

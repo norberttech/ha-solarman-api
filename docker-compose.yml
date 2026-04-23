@@ -7,15 +7,8 @@ services:
     ports:
       - "8123:8123"
     volumes:
-      # Named volume for /config so SQLite lives on the Docker VM's native fs.
-      # macOS bind-mounts (osxfs/VirtioFS) break SQLite WAL semantics and corrupt
-      # the recorder DB on fresh startup.
-      - ha-config:/config
-      # custom_components stays bind-mounted so code changes land instantly.
+      - ./ha-config:/config
       - ./custom_components:/config/custom_components
       - /etc/localtime:/etc/localtime:ro
     environment:
       - TZ=Europe/Warsaw
-
-volumes:
-  ha-config:

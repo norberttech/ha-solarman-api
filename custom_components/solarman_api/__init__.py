@@ -193,7 +193,11 @@ def _async_register_services(hass: HomeAssistant) -> None:
 
     async def _import_historical_statistics(call: ServiceCall) -> dict[str, Any]:
         days: int = call.data["days"]
-        end: date = call.data.get("end") or (date.today() - timedelta(days=1))
+        # Default window ends today — the statistics helper imports daily
+        # rows for yesterday and earlier, and hourly rows for today from
+        # 00:00 UTC up to the last completed hour. The live sensor's next
+        # hourly compile continues from there without a gap.
+        end: date = call.data.get("end") or date.today()
         start: date = end - timedelta(days=days - 1)
         requested_sn = call.data.get("device_sn")
 

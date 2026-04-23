@@ -8,7 +8,6 @@ from custom_components.solarman_api.statistics import (
     MAX_WINDOW_DAYS,
     _build_stat_rows,
     _parse_collect_time,
-    historical_statistic_id,
 )
 
 
@@ -31,16 +30,16 @@ def test_key_map_covers_energy_dashboard_channels() -> None:
         assert name
 
 
-def test_build_stat_rows_fresh_install_starts_from_zero() -> None:
+def test_build_stat_rows_no_offset_starts_from_zero() -> None:
     days = [
         (_utc(2026, 4, 1), 10.0),
         (_utc(2026, 4, 2), 12.5),
         (_utc(2026, 4, 3), 8.0),
     ]
-    rows = _build_stat_rows(days, last_sum=0.0, last_start=None)
+    rows = _build_stat_rows(days, start_offset=0.0)
     # state and sum both carry the cumulative running total so the recorder
-    # sees a monotonically increasing energy series; writing daily deltas
-    # into `state` produced boundary discontinuities with the live sensor.
+    # sees a monotonically increasing energy series; daily deltas between
+    # successive sums equal the per-day values the Energy dashboard plots.
     assert [r["sum"] for r in rows] == [10.0, 22.5, 30.5]
     assert [r["state"] for r in rows] == [10.0, 22.5, 30.5]
     assert [r["start"] for r in rows] == [d for d, _ in days]
@@ -52,7 +51,7 @@ def test_build_stat_rows_sorts_by_day() -> None:
         (_utc(2026, 4, 1), 10.0),
         (_utc(2026, 4, 2), 12.5),
     ]
-    rows = _build_stat_rows(days, last_sum=0.0, last_start=None)
+    rows = _build_stat_rows(days, start_offset=0.0)
     assert [r["start"] for r in rows] == [
         _utc(2026, 4, 1),
         _utc(2026, 4, 2),
@@ -60,26 +59,32 @@ def test_build_stat_rows_sorts_by_day() -> None:
     ]
 
 
-def test_build_stat_rows_skips_already_imported_days() -> None:
+def test_build_stat_rows_alignment_ends_at_live_counter() -> None:
+    """Caller computes `start_offset = live_lifetime - total_import` so the
+    final imported row's `state` matches what the live TOTAL_INCREASING
+    sensor currently reports. Without this, the next live compile sees a
+    delta of tens of thousands of kWh and dumps it into one hourly bar.
+    """
     days = [
-        (_utc(2026, 4, 1), 10.0),
-        (_utc(2026, 4, 2), 12.5),
-        (_utc(2026, 4, 3), 8.0),
+        (_utc(2026, 4, 20), 13.87),
+        (_utc(2026, 4, 21), 30.92),
+        (_utc(2026, 4, 22), 15.21),
     ]
-    rows = _build_stat_rows(
-        days, last_sum=100.0, last_start=_utc(2026, 4, 2)
-    )
-    # Only 4/3 should be imported; running sum continues from 100.
-    assert len(rows) == 1
-    assert rows[0]["start"] == _utc(2026, 4, 3)
-    assert rows[0]["state"] == 108.0
-    assert rows[0]["sum"] == 108.0
+    total = sum(v for _, v in days)
+    live_lifetime = 43977.7
+    rows = _build_stat_rows(days, start_offset=live_lifetime - total)
+    # Last row ends exactly at the live counter.
+    assert rows[-1]["state"] == live_lifetime
+    assert rows[-1]["sum"] == live_lifetime
+    # Per-day deltas are preserved regardless of offset.
+    deltas = [rows[0]["sum"] - (live_lifetime - total)] + [
+        rows[i]["sum"] - rows[i - 1]["sum"] for i in range(1, len(rows))
+    ]
+    assert [round(d, 2) for d in deltas] == [13.87, 30.92, 15.21]
 
 
-def test_build_stat_rows_returns_empty_when_everything_already_imported() -> None:
-    days = [(_utc(2026, 4, 1), 10.0), (_utc(2026, 4, 2), 12.5)]
-    rows = _build_stat_rows(days, last_sum=50.0, last_start=_utc(2026, 4, 2))
-    assert rows == []
+def test_build_stat_rows_empty_input_returns_empty() -> None:
+    assert _build_stat_rows([], start_offset=100.0) == []
 
 
 def test_parse_collect_time_iso_string() -> None:
@@ -100,19 +105,6 @@ def test_parse_collect_time_invalid_returns_none() -> None:
     assert _parse_collect_time(None) is None
     assert _parse_collect_time("not-a-date") is None
     assert _parse_collect_time("") is None
-
-
-def test_historical_statistic_id_uses_domain_prefixed_external_namespace() -> None:
-    """External statistic_id must be `{domain}:{object_id}` — HA rejects
-    anything else for async_add_external_statistics and this format also
-    keeps historical imports from colliding with live sensor entity-stats.
-    """
-    sid = historical_statistic_id("SP1ES110M72141", "Et_ge0")
-    assert sid == "solarman_api:sp1es110m72141_et_ge0_historical"
-    # Must contain a ':' (external-stats format) and not look like an
-    # entity_id (`sensor.foo`) which would collide with the live sensor.
-    assert ":" in sid
-    assert not sid.startswith("sensor.")
 
 
 def test_max_window_days_respects_api_cap() -> None:

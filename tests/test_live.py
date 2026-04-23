@@ -21,7 +21,11 @@ import pytest
 import pytest_socket
 
 from custom_components.solarman_api.api import SolarmanClient
-from custom_components.solarman_api.const import BATTERY_SENSORS, INVERTER_SENSORS
+from custom_components.solarman_api.const import (
+    BATTERY_SENSORS,
+    DERIVED_KEY_PREFIX,
+    INVERTER_SENSORS,
+)
 
 _REQUIRED = (
     "SOLARMAN_EMAIL",
@@ -62,9 +66,22 @@ async def test_live_flow() -> None:
         assert devices, "no devices returned"
         print(f"[live] devices at station {station_id}: {len(devices)}")
 
+        # Skip descriptors whose `key` is a synthetic marker (prefixed with
+        # `_derived_`) — those sensors are computed locally from other
+        # bucket entries and intentionally don't exist in Solarman's
+        # currentData response. Only native-API keys belong in the
+        # conformance check below.
         expected_keys = {
-            "INVERTER": {d.key for d in INVERTER_SENSORS},
-            "BATTERY": {d.key for d in BATTERY_SENSORS},
+            "INVERTER": {
+                d.key
+                for d in INVERTER_SENSORS
+                if not d.key.startswith(DERIVED_KEY_PREFIX)
+            },
+            "BATTERY": {
+                d.key
+                for d in BATTERY_SENSORS
+                if not d.key.startswith(DERIVED_KEY_PREFIX)
+            },
         }
         device_types_seen: set[str] = set()
         missing_by_device: dict[str, set[str]] = {}
@@ -122,15 +139,15 @@ async def test_live_flow() -> None:
         for candidate in ("paramDataList", "dataList", "daysList", "list"):
             if candidate in hist and isinstance(hist[candidate], list):
                 bucket = hist[candidate]
-                print(
-                    f"[live]   historical[{candidate!r}]: {len(bucket)} entries"
-                )
+                print(f"[live]   historical[{candidate!r}]: {len(bucket)} entries")
                 if bucket:
                     first = bucket[0]
                     if isinstance(first, dict):
                         print(f"[live]     first entry keys: {sorted(first.keys())}")
                         ct = first.get("collectTime")
-                        print(f"[live]     first entry collectTime: {ct!r} (type={type(ct).__name__})")
+                        print(
+                            f"[live]     first entry collectTime: {ct!r} (type={type(ct).__name__})"
+                        )
                         dl = first.get("dataList")
                         if isinstance(dl, list) and dl:
                             all_entries = [

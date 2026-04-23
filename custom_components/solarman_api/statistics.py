@@ -15,12 +15,15 @@ so the Energy dashboard picks them up without extra user configuration.
 Running sums and states are chained daily → hourly → live compile so the
 boundaries produce no spikes.
 """
+
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.models import (
     StatisticData,
     StatisticMeanType,
@@ -132,9 +135,7 @@ def _build_daily_rows(
     for day_start, daily_value in ordered:
         state_cursor += daily_value
         running_sum += daily_value
-        rows.append(
-            StatisticData(start=day_start, state=state_cursor, sum=running_sum)
-        )
+        rows.append(StatisticData(start=day_start, state=state_cursor, sum=running_sum))
     return rows
 
 
@@ -189,9 +190,7 @@ def _build_today_hourly_rows(
             delta = 0.0
             end_state = prev_state
         running_sum += delta
-        rows.append(
-            StatisticData(start=hour_start, state=end_state, sum=running_sum)
-        )
+        rows.append(StatisticData(start=hour_start, state=end_state, sum=running_sum))
         prev_state = end_state
     return rows
 
@@ -212,6 +211,36 @@ def _live_sensor_state(
         return entity_id, float(state_obj.state)
     except (TypeError, ValueError):
         return entity_id, None
+
+
+async def _clear_statistics_and_wait(
+    hass: HomeAssistant, statistic_ids: list[str]
+) -> None:
+    """Queue a clear on the recorder and await completion.
+
+    `get_instance(hass).async_clear_statistics` enqueues a task that deletes
+    the DB rows AND invalidates the in-memory short-term stats cache for
+    those ids. Awaiting the `on_done` callback guarantees subsequent
+    `async_import_statistics` calls land against a clean slate and the
+    recorder's next hourly compile cycle won't resurrect a stale `last_sum`
+    from its cache.
+    """
+    done = asyncio.Event()
+
+    def _on_done() -> None:
+        hass.loop.call_soon_threadsafe(done.set)
+
+    get_instance(hass).async_clear_statistics(statistic_ids, on_done=_on_done)
+    # Bound the wait so a stuck recorder never blocks the service
+    # indefinitely; 30s is generous for a six-entity clear.
+    try:
+        await asyncio.wait_for(done.wait(), timeout=30)
+    except asyncio.TimeoutError:
+        _LOGGER.warning(
+            "Timed out waiting for recorder to clear %d statistic_ids; "
+            "proceeding with import anyway",
+            len(statistic_ids),
+        )
 
 
 async def _fetch_daily_window(
@@ -286,9 +315,7 @@ async def async_import_historical_statistics(
             (d for d in devices if d.get("deviceSn") == target_device_sn), None
         )
     else:
-        inverter = next(
-            (d for d in devices if d.get("deviceType") == "INVERTER"), None
-        )
+        inverter = next((d for d in devices if d.get("deviceType") == "INVERTER"), None)
     if inverter is None:
         return {"total": 0, "error": "no inverter device found"}
 
@@ -354,12 +381,30 @@ async def async_import_historical_statistics(
 
     now_utc = datetime.now(tz=timezone.utc)
 
+    # Resolve all channel entity_ids up-front so we can clear their
+    # statistics (and invalidate the recorder's short-term stats cache) in
+    # a single pass before writing any imports. Skipping this clear led to
+    # a boundary spike on the first post-import live compile: the recorder
+    # had cached the pre-import `last_sum=0` for short-term aggregation,
+    # then continued from that stale baseline on the next hourly tick,
+    # producing a −(total_of_days) kWh delta on one bar.
+    statistic_ids_to_clear: list[str] = []
+    entity_by_cd_key: dict[str, str] = {}
+    for _, (cd_key, _display) in HISTORICAL_KEY_MAP.items():
+        entity_id, _ = _live_sensor_state(hass, device_sn, cd_key)
+        if entity_id is not None:
+            entity_by_cd_key[cd_key] = entity_id
+            statistic_ids_to_clear.append(entity_id)
+
+    if statistic_ids_to_clear:
+        await _clear_statistics_and_wait(hass, statistic_ids_to_clear)
+
     per_channel: dict[str, dict[str, int]] = {}
     for historical_key, (cd_key, display_name) in HISTORICAL_KEY_MAP.items():
         daily_values = daily_by_key.get(historical_key, [])
         today_samples = today_samples_by_cd_key.get(cd_key, [])
 
-        entity_id, live_value = _live_sensor_state(hass, device_sn, cd_key)
+        entity_id = entity_by_cd_key.get(cd_key)
         if entity_id is None:
             _LOGGER.warning(
                 "Entity for %s not registered yet; skipping channel %s",
@@ -368,6 +413,9 @@ async def async_import_historical_statistics(
             )
             per_channel[historical_key] = {"daily": 0, "hourly": 0}
             continue
+        # live_value only needed as a fallback when the 5-min endpoint has
+        # no samples yet; re-resolve it now that stats are cleared.
+        _, live_value = _live_sensor_state(hass, device_sn, cd_key)
 
         hourly_end_states = _aggregate_samples_to_hourly(today_samples, now_utc)
 

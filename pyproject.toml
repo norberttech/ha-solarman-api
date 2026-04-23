@@ -12,6 +12,7 @@ dev = [
   "pytest-asyncio",
   "pytest-homeassistant-custom-component",
   "aioresponses",
+  "ruff",
 ]
 
 [tool.pytest.ini_options]

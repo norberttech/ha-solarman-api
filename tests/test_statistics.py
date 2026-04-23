@@ -1,4 +1,5 @@
 """Unit tests for statistics backfill helpers."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -100,7 +101,7 @@ def test_aggregate_samples_to_hourly_last_sample_per_hour_wins() -> None:
         (_utc(2026, 4, 23, 0, 55), 102.0),  # last in hour 0 -> end state
         (_utc(2026, 4, 23, 1, 10), 103.0),
         (_utc(2026, 4, 23, 1, 50), 105.5),  # last in hour 1
-        (_utc(2026, 4, 23, 2, 5), 106.0),   # current partial hour (will be skipped)
+        (_utc(2026, 4, 23, 2, 5), 106.0),  # current partial hour (will be skipped)
     ]
     hourly = _aggregate_samples_to_hourly(samples, now_utc=_utc(2026, 4, 23, 2, 15))
     assert hourly == [
@@ -144,7 +145,7 @@ def test_build_today_hourly_rows_clamps_counter_decreases() -> None:
     """
     hourly_end_states = [
         (_utc(2026, 4, 23, 0), 100.0),
-        (_utc(2026, 4, 23, 1), 95.0),   # dip — should be clamped
+        (_utc(2026, 4, 23, 1), 95.0),  # dip — should be clamped
         (_utc(2026, 4, 23, 2), 102.0),  # recovery — delta vs the clamped 100.0
     ]
     rows = _build_today_hourly_rows(

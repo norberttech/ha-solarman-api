@@ -73,6 +73,21 @@ kWh sensors below. Assumes the inverter device was left at the default name — 
 `Home consumption total` exists as `sensor.<inverter>_home_consumption_total` but the Energy Dashboard computes
 consumption from the grid/solar/battery flows — don't wire it in yourself unless you want a redundant source.
 
+## Optional: inverter losses as an individual device
+
+The integration exposes a derived pair of sensors that account for the power the inverter itself burns
+(electronics, cooling, AC/DC conversion, battery round-trip):
+
+| Entity                                        | Unit | Purpose                                                  |
+|-----------------------------------------------|------|----------------------------------------------------------|
+| `sensor.<inverter>_inverter_energy`           | W    | Live rate — instantaneous loss at the current moment     |
+| `sensor.<inverter>_inverter_energy_total`     | kWh  | Cumulative, Energy Dashboard-compatible (total_increasing) |
+
+Add the `_total` one under **Individual electrical devices -> Add device** to see the inverter as a tracked
+consumer in your daily breakdown. Both values are computed from the energy-balance equation (inflows −
+outflows across the inverter boundary), not reported natively by Solarman — they include battery round-trip
+losses, so expect the cumulative number to be higher than "pure inverter standby" would suggest.
+
 ## Optional: live power-flow animation
 
 Each of the three sections above has an optional **power sensor** field. Adding these enables the pulsing-kW flow

@@ -50,6 +50,14 @@ LIFETIME_CUMULATIVE_KEYS: Final[frozenset[str]] = frozenset(
     {"Et_ge0", "t_gc1", "Et_pu1", "Et_use1", "t_cg_n1", "t_dcg_n1"}
 )
 
+# Prefix marking a sensor as computed from the energy-balance equation
+# instead of read directly from the currentData response. Keys carrying
+# this prefix don't exist in the API — SolarmanSensor intercepts them and
+# derives the value from other bucket entries.
+DERIVED_KEY_PREFIX: Final = "_derived_"
+DERIVED_SELF_CONSUMPTION_POWER: Final = f"{DERIVED_KEY_PREFIX}self_consumption_power"
+DERIVED_SELF_CONSUMPTION_TOTAL: Final = f"{DERIVED_KEY_PREFIX}self_consumption_total"
+
 
 @dataclass(frozen=True, kw_only=True)
 class SolarmanSensorDescription(SensorEntityDescription):
@@ -212,6 +220,24 @@ INVERTER_SENSORS: Final[tuple[SolarmanSensorDescription, ...]] = (
         key="Etdy_dcg1",
         translation_key="battery_discharge_today",
         name="Battery discharge today",
+        **_ENERGY_KWH_TOTAL,
+    ),
+    # Inverter overhead — derived via energy balance rather than a native
+    # API field (Solarman doesn't expose a dedicated loss meter). The
+    # cumulative value inherently includes battery round-trip losses along
+    # with inverter electronics/conversion overhead, which is why this is
+    # labelled "Inverter Energy" rather than pure "self-consumption".
+    # See _derive_value() in sensor.py for the formula and signs.
+    SolarmanSensorDescription(
+        key=DERIVED_SELF_CONSUMPTION_POWER,
+        translation_key="inverter_energy",
+        name="Inverter Energy",
+        **_POWER_W,
+    ),
+    SolarmanSensorDescription(
+        key=DERIVED_SELF_CONSUMPTION_TOTAL,
+        translation_key="inverter_energy_total",
+        name="Inverter Energy Total",
         **_ENERGY_KWH_TOTAL,
     ),
     SolarmanSensorDescription(

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Any
 
 import aiohttp
 import pytest
@@ -173,7 +172,9 @@ async def test_historical_posts_expected_payload(session):
                 "paramDataList": [
                     {
                         "collectTime": 1_700_000_000,
-                        "dataList": [{"key": "generation", "value": "17.58", "unit": "kWh"}],
+                        "dataList": [
+                            {"key": "generation", "value": "17.58", "unit": "kWh"}
+                        ],
                     }
                 ],
             },

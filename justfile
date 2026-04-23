@@ -5,6 +5,9 @@ set dotenv-required := false
 default:
     @just --list
 
+# Full local preflight: lint, format-check, unit tests, and live API test.
+all: lint format-check test test-live
+
 # Run the fast test suite (excludes tests/test_live.py).
 test:
     .venv/bin/pytest tests/ --ignore=tests/test_live.py
@@ -13,13 +16,17 @@ test:
 test-live:
     .venv/bin/pytest tests/test_live.py -s
 
-# Lint the integration + tests with ruff (nix-shell provided).
+# Lint the integration + tests with ruff.
 lint:
-    ruff check custom_components tests
+    .venv/bin/ruff check custom_components tests
 
-# Auto-format with ruff (nix-shell provided).
+# Auto-format with ruff.
 format:
-    ruff format custom_components tests
+    .venv/bin/ruff format custom_components tests
+
+# Dry-run format check — exits non-zero if anything needs reformatting.
+format-check:
+    .venv/bin/ruff format --check custom_components tests
 
 # Type-check the integration with mypy (nix-shell provided).
 typecheck:

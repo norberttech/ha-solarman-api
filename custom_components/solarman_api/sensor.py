@@ -13,6 +13,9 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    DERIVED_KEY_PREFIX,
+    DERIVED_SELF_CONSUMPTION_POWER,
+    DERIVED_SELF_CONSUMPTION_TOTAL,
     DOMAIN,
     SENSORS_BY_DEVICE_TYPE,
     STALE_AFTER,
@@ -113,7 +116,10 @@ class SolarmanSensor(CoordinatorEntity[SolarmanCoordinator], SensorEntity):
         bucket = (self.coordinator.data or {}).get(self._device_sn)
         if bucket is None:
             return None
-        return bucket.get(self.entity_description.key)
+        key = self.entity_description.key
+        if key.startswith(DERIVED_KEY_PREFIX):
+            return _derive_value(key, bucket)
+        return bucket.get(key)
 
 
 def _to_float(raw: Any, precision: int | None) -> float | None:
@@ -124,3 +130,74 @@ def _to_float(raw: Any, precision: int | None) -> float | None:
     if precision is not None:
         return round(value, precision)
     return value
+
+
+def _as_float(value: Any) -> float | None:
+    """Parse a bucket entry to float, returning None on failure."""
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _derive_value(key: str, bucket: dict[str, Any]) -> float | None:
+    """Compute a derived sensor value from other entries in the bucket.
+
+    Returns None when any required input is missing so the sensor becomes
+    `unknown` rather than reporting a wrong number. Sign conventions were
+    verified empirically against a full day of 5-minute samples covering
+    night-battery, sunrise-ramp, solar-peak-export, and idle states.
+    """
+    if key == DERIVED_SELF_CONSUMPTION_POWER:
+        # Instantaneous self-consumption via energy balance at the inverter
+        # boundary: inflows (PV + grid_import + battery_discharge) minus
+        # outflows (home + grid_export + battery_charge) equals the power
+        # the inverter's own electronics/cooling/conversion are burning.
+        #
+        # Sign conventions from empirical verification:
+        #   TPG    — always ≥ 0, sum of DP1..DPn (more reliable than PVTP
+        #            which zeroes out at low power).
+        #   PG_Pt1 — + = export, - = import.
+        #   B_P1   — + = charge, - = discharge.
+        pv = _as_float(bucket.get("TPG"))
+        grid = _as_float(bucket.get("PG_Pt1"))
+        battery = _as_float(bucket.get("B_P1"))
+        home = _as_float(bucket.get("E_Puse_t1"))
+        if None in (pv, grid, battery, home):
+            return None
+        grid_in = max(0.0, -grid)
+        grid_out = max(0.0, grid)
+        battery_in = max(0.0, -battery)
+        battery_out = max(0.0, battery)
+        return pv + grid_in + battery_in - home - grid_out - battery_out
+
+    if key == DERIVED_SELF_CONSUMPTION_TOTAL:
+        # Lifetime self-consumption from the same balance on cumulative
+        # kWh counters. Clamped to >= 0: per-poll rounding can occasionally
+        # push this a few Wh negative, which would otherwise trip HA's
+        # TOTAL_INCREASING "reset detected" branch and dump the running
+        # total as a spike.
+        pv_total = _as_float(bucket.get("Et_ge0"))
+        grid_import = _as_float(bucket.get("Et_pu1"))
+        battery_discharge = _as_float(bucket.get("t_dcg_n1"))
+        home_total = _as_float(bucket.get("Et_use1"))
+        grid_export = _as_float(bucket.get("t_gc1"))
+        battery_charge = _as_float(bucket.get("t_cg_n1"))
+        required = (
+            pv_total,
+            grid_import,
+            battery_discharge,
+            home_total,
+            grid_export,
+            battery_charge,
+        )
+        if None in required:
+            return None
+        value = (pv_total + grid_import + battery_discharge) - (
+            home_total + grid_export + battery_charge
+        )
+        return max(0.0, value)
+
+    return None

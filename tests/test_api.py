@@ -198,6 +198,26 @@ async def test_historical_posts_expected_payload(session):
 
 
 @pytest.mark.asyncio
+async def test_current_data_success_false_raises_api_error(session):
+    client = _make_client(session)
+    client._access_token = "tok"
+    with aioresponses() as m:
+        m.post(
+            CURRENT_URL,
+            payload={
+                "success": False,
+                "code": 3501004,
+                "msg": "remote rpc exception",
+                "dataList": None,
+            },
+        )
+        with pytest.raises(SolarmanApiError) as exc_info:
+            await client.current_data("SN1")
+    assert "3501004" in str(exc_info.value)
+    assert "remote rpc exception" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
 async def test_json_parse_error_raises_api_error(session):
     client = _make_client(session)
     client._access_token = "tok"

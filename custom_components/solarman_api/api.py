@@ -100,9 +100,18 @@ class SolarmanClient:
         for the timestamp of the reading. Both are top-level fields in the
         Solarman response.
         """
-        return await self._request(
+        resp = await self._request(
             "POST", "/device/v1.0/currentData", json={"deviceSn": device_sn}
         )
+        # Solarman occasionally answers HTTP 200 with a JSON envelope like
+        # {"success": false, "code": 3501004, "msg": "remote rpc exception"}
+        # when its backend fails to reach the datalogger. dataList is null in
+        # that case; treating it as success would drop all keys from the
+        # sensor bucket and flip every entity to `unknown`. Surface it as a
+        # transient API error so the coordinator keeps the previous reading.
+        if resp.get("success") is False:
+            raise SolarmanApiError(0, f"{resp.get('code')}: {resp.get('msg')}")
+        return resp
 
     async def historical(
         self,

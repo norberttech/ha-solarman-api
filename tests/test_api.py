@@ -199,6 +199,10 @@ async def test_historical_posts_expected_payload(session):
 
 @pytest.mark.asyncio
 async def test_current_data_success_false_raises_api_error(session):
+    """Solarman backend RPC failure shape — `_request` must surface this as
+    SolarmanApiError so the coordinator's exception branch preserves the
+    previous bucket instead of clobbering it with empty data.
+    """
     client = _make_client(session)
     client._access_token = "tok"
     with aioresponses() as m:
@@ -215,6 +219,51 @@ async def test_current_data_success_false_raises_api_error(session):
             await client.current_data("SN1")
     assert "3501004" in str(exc_info.value)
     assert "remote rpc exception" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_historical_success_false_raises_api_error(session):
+    """Same envelope on the historical endpoint must also raise — otherwise
+    the statistics import silently skips the day with no warning.
+    """
+    client = _make_client(session)
+    client._access_token = "tok"
+    historical_url = f"{BASE_URL}/device/v1.0/historical"
+    with aioresponses() as m:
+        m.post(
+            historical_url,
+            payload={
+                "success": False,
+                "code": 3501004,
+                "msg": "remote rpc exception",
+                "paramDataList": None,
+            },
+        )
+        with pytest.raises(SolarmanApiError):
+            await client.historical("SN1", "2026-04-15", "2026-04-22", time_type=2)
+
+
+@pytest.mark.asyncio
+async def test_list_stations_success_false_raises_api_error(session):
+    """Setup-time endpoint: failing should bubble up so `__init__` raises
+    ConfigEntryNotReady (HA retries) instead of getting an empty list and
+    bailing with a misleading "No stations reported" error.
+    """
+    client = _make_client(session)
+    client._access_token = "tok"
+    stations_url = f"{BASE_URL}/station/v1.0/list"
+    with aioresponses() as m:
+        m.post(
+            stations_url,
+            payload={
+                "success": False,
+                "code": 3501004,
+                "msg": "remote rpc exception",
+                "stationList": None,
+            },
+        )
+        with pytest.raises(SolarmanApiError):
+            await client.list_stations()
 
 
 @pytest.mark.asyncio

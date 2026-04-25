@@ -66,7 +66,14 @@ class SolarmanCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
                 result, (SolarmanRateLimitError, SolarmanApiError, asyncio.TimeoutError)
             ):
                 _LOGGER.warning("currentData failed for %s: %s", sn, result)
-                new_data[sn] = previous.get(sn, {_COLLECTION_TIME_KEY: None})
+                # Reuse the previous bucket so sensors hold their last reading.
+                # On cold start there is no previous bucket; omitting the device
+                # leaves `bucket is None` in `available`, so sensors render
+                # Unavailable. A `{_collectionTime: None}` placeholder would
+                # render Unknown.
+                prev_bucket = previous.get(sn)
+                if prev_bucket is not None:
+                    new_data[sn] = prev_bucket
                 continue
             if isinstance(result, BaseException):
                 raise UpdateFailed(f"Unexpected error for {sn}: {result}") from result

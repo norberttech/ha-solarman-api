@@ -100,6 +100,29 @@ async def test_per_device_api_error_does_not_blackout_others(
     assert data["SN_BAT"]["SOC_BAP1"] == "87"
 
 
+async def test_first_refresh_with_api_error_omits_device(
+    hass: HomeAssistant,
+) -> None:
+    """Cold start + transient API error: device must be omitted from
+    `coordinator.data` (not stored as a `{_collectionTime: None}`
+    placeholder) so sensors render Unavailable, not Unknown.
+    """
+    client = MagicMock()
+    client.current_data = AsyncMock(
+        side_effect=[
+            SolarmanApiError(0, "3501004: remote rpc exception"),
+            {
+                "collectionTime": 1_700_000_000,
+                "dataList": [{"key": "SOC_BAP1", "value": "87"}],
+            },
+        ]
+    )
+    coordinator = SolarmanCoordinator(hass, _entry(hass), client, 1, _devices())
+    data = await coordinator._async_update_data()
+    assert "SN_INV" not in data
+    assert data["SN_BAT"]["SOC_BAP1"] == "87"
+
+
 async def test_rate_limit_error_surfaces_as_warning(
     hass: HomeAssistant, caplog: pytest.LogCaptureFixture
 ) -> None:

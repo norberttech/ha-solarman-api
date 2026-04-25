@@ -100,18 +100,9 @@ class SolarmanClient:
         for the timestamp of the reading. Both are top-level fields in the
         Solarman response.
         """
-        resp = await self._request(
+        return await self._request(
             "POST", "/device/v1.0/currentData", json={"deviceSn": device_sn}
         )
-        # Solarman occasionally answers HTTP 200 with a JSON envelope like
-        # {"success": false, "code": 3501004, "msg": "remote rpc exception"}
-        # when its backend fails to reach the datalogger. dataList is null in
-        # that case; treating it as success would drop all keys from the
-        # sensor bucket and flip every entity to `unknown`. Surface it as a
-        # transient API error so the coordinator keeps the previous reading.
-        if resp.get("success") is False:
-            raise SolarmanApiError(0, f"{resp.get('code')}: {resp.get('msg')}")
-        return resp
 
     async def historical(
         self,
@@ -148,18 +139,24 @@ class SolarmanClient:
         json: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Authenticated request with one-shot 401 reauth and one-shot 429 retry."""
+        """Authenticated request with one-shot 401 reauth and one-shot 429 retry.
+
+        Solarman occasionally answers HTTP 200 with `{"success": false}` and a
+        null payload when its backend RPC to the datalogger fails. Surface that
+        as SolarmanApiError so callers don't silently parse empty data. (Auth
+        uses `_raw_request` directly and does its own success check.)
+        """
         if self._access_token is None:
             await self.authenticate()
         try:
-            return await self._raw_request(
+            resp = await self._raw_request(
                 method, path, json=json, params=params, authed=True
             )
         except _Unauthorized:
             _LOGGER.info("Solarman token rejected; re-authenticating once")
             await self.authenticate()
             try:
-                return await self._raw_request(
+                resp = await self._raw_request(
                     method, path, json=json, params=params, authed=True
                 )
             except _Unauthorized as err:
@@ -172,11 +169,15 @@ class SolarmanClient:
             )
             await asyncio.sleep(err.retry_after)
             try:
-                return await self._raw_request(
+                resp = await self._raw_request(
                     method, path, json=json, params=params, authed=True
                 )
             except _RateLimited as err2:
                 raise SolarmanRateLimitError(err2.retry_after) from err2
+
+        if resp.get("success") is False:
+            raise SolarmanApiError(0, f"{resp.get('code')}: {resp.get('msg')}")
+        return resp
 
     async def _raw_request(
         self,

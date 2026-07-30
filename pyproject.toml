@@ -1,6 +1,6 @@
 [project]
 name = "ha-solarman-api"
-version = "0.0.1"
+version = "0.0.8"
 description = "Home Assistant custom integration for the Solarman API"
 requires-python = ">=3.13.2,<3.14"
 

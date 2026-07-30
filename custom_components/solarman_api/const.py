@@ -65,6 +65,17 @@ class SolarmanSensorDescription(SensorEntityDescription):
 
     device_type: DeviceTypeLiteral = "INVERTER"
 
+    # Negate the API value before publishing it as the entity state. Solarman
+    # signs its two directional power fields the opposite way round from Home
+    # Assistant: `PG_Pt1` is positive while exporting where HA wants positive
+    # while importing, and `B_P1` is positive while charging where HA wants
+    # positive while discharging. Flipping here means the Energy dashboard's
+    # `Standard` polarity option is the correct pick for every sensor we
+    # expose, and HA never has to generate an `... Inverted` helper entity.
+    # NOTE: this applies at the entity boundary only — `_derive_value()` in
+    # sensor.py reads the untouched API bucket and keeps Solarman's signs.
+    invert: bool = False
+
 
 _POWER_W = dict(
     native_unit_of_measurement=UnitOfPower.WATT,
@@ -139,6 +150,7 @@ INVERTER_SENSORS: Final[tuple[SolarmanSensorDescription, ...]] = (
         key="PG_Pt1",
         translation_key="grid_power",
         name="Grid power",
+        invert=True,
         **_POWER_W,
     ),
     SolarmanSensorDescription(
@@ -187,6 +199,7 @@ INVERTER_SENSORS: Final[tuple[SolarmanSensorDescription, ...]] = (
         key="B_P1",
         translation_key="battery_power",
         name="Battery power",
+        invert=True,
         **_POWER_W,
     ),
     SolarmanSensorDescription(

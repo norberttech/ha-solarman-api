@@ -90,10 +90,16 @@ class SolarmanSensor(CoordinatorEntity[SolarmanCoordinator], SensorEntity):
         if raw is None or raw == "":
             return None
         desc = self.entity_description
-        if desc.device_class in _NUMERIC_DEVICE_CLASSES:
-            return _to_float(raw, desc.suggested_display_precision)
-        if desc.native_unit_of_measurement:
-            return _to_float(raw, desc.suggested_display_precision)
+        if (
+            desc.device_class in _NUMERIC_DEVICE_CLASSES
+            or desc.native_unit_of_measurement
+        ):
+            value = _to_float(raw, desc.suggested_display_precision)
+            if value is None or not desc.invert:
+                return value
+            # Subtracting from 0.0 rather than negating keeps a zero reading
+            # as 0.0 instead of -0.0, which would render as "-0" in the UI.
+            return 0.0 - value
         return str(raw)
 
     @property
@@ -156,7 +162,10 @@ def _derive_value(key: str, bucket: dict[str, Any]) -> float | None:
         # outflows (home + grid_export + battery_charge) equals the power
         # the inverter's own electronics/cooling/conversion are burning.
         #
-        # Sign conventions from empirical verification:
+        # Sign conventions from empirical verification. These are the *raw*
+        # API polarities — the grid and battery entities publish PG_Pt1 and
+        # B_P1 negated (`invert=True`) to match Home Assistant, but that
+        # happens at the entity boundary and never reaches this bucket:
         #   TPG    — always ≥ 0, sum of DP1..DPn (more reliable than PVTP
         #            which zeroes out at low power).
         #   PG_Pt1 — + = export, - = import.

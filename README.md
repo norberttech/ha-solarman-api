@@ -80,13 +80,32 @@ diagram at the top of the Energy Dashboard. They don't affect the daily bars / h
 
 | Section      | Field                     | Option   | Entity                                     |
 |--------------|---------------------------|----------|--------------------------------------------|
-| Grid         | Type of power measurement | Inverted | `sensor.<inverter>_grid_power` (`PG_Pt1`)  |
-| Solar panels | Solar production power    | Standard | `sensor.<inverter>_pv_power` (`PVTP`)      |
+| Grid         | Type of power measurement | Standard | `sensor.<inverter>_grid_power` (`PG_Pt1`)  |
+| Solar panels | Solar production power    | n/a      | `sensor.<inverter>_pv_power` (`PVTP`)      |
 | Home battery | Type of power measurement | Standard | `sensor.<inverter>_battery_power` (`B_P1`) |
 
-The Solarman API reports grid power positive while **exporting**, which is the opposite of HA's default — hence
-`Inverted` for the grid field. For solar and battery, positive = producing/discharging matches HA's default, so use
-`Standard`. If any flow arrow points the wrong way after saving, flip between `Standard` / `Inverted`.
+`Standard` is correct for both, because the integration already publishes them in HA's polarity. The Solarman API
+signs both fields the opposite way round from HA, so the two entities negate the raw value before publishing it:
+
+| Entity        | Raw API field                  | Published entity        | HA's `Standard` definition |
+|---------------|--------------------------------|-------------------------|----------------------------|
+| Grid power    | `PG_Pt1` + while **exporting** | + while **importing**   | + when consuming from grid |
+| Battery power | `B_P1` + while **charging**    | + while **discharging** | + when discharging         |
+
+Solar production is unsigned (always >= 0), so it has no polarity option.
+
+Two consequences worth knowing:
+
+- The battery curve will *not* match the Sofar/Solarman cloud chart, and that's expected. The vendor portal plots
+  discharge below zero; HA plots discharge above zero, as a source feeding the house, with charging below zero.
+- Don't pick `Inverted` to "fix" that. It makes HA spawn a helper entity (`<sensor name> Inverted`) with no
+  back-history, so the power graph looks empty for every hour before you saved — and the flow direction ends up
+  wrong anyway.
+
+> **Upgrading from 0.0.7 or earlier?** `grid_power` and `battery_power` used to be published in the raw Solarman
+> polarity, and the setup instructions said to pick `Inverted`. Switch both fields to `Standard` after updating,
+> otherwise the sign is flipped twice and the flows point the wrong way. Recorded history for those two sensors
+> keeps its old sign up to the update — only the kWh totals feed the daily energy bars, so the bars are unaffected.
 
 ## Backfill history
 

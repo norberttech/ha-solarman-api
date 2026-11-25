@@ -377,7 +377,14 @@ async def async_import_historical_statistics(
             (d for d in devices if d.get("deviceSn") == target_device_sn), None
         )
     else:
-        inverter = next((d for d in devices if d.get("deviceType") == "INVERTER"), None)
+        inverter = next(
+            (
+                d
+                for d in devices
+                if d.get("deviceType") in ("INVERTER", "MICRO_INVERTER")
+            ),
+            None,
+        )
     if inverter is None:
         return {"total": 0, "error": "no inverter device found"}
 

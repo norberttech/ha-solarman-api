@@ -171,7 +171,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
             targets = [
                 d
                 for d in runtime.devices
-                if d.get("deviceType") in ("INVERTER", "BATTERY")
+                if d.get("deviceType") in ("INVERTER", "MICRO_INVERTER", "BATTERY")
             ]
 
         result: dict[str, Any] = {}

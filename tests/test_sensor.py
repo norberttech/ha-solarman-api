@@ -222,3 +222,62 @@ def test_derived_sensor_reads_raw_polarity_through_the_entity() -> None:
     """
     bucket = {"TPG": "0", "PG_Pt1": "0", "B_P1": "-910", "E_Puse_t1": "840"}
     assert _entity_value(DERIVED_SELF_CONSUMPTION_POWER, bucket) == pytest_approx(70)
+
+
+async def _created_keys(device_type: str, bucket: dict[str, Any] | None) -> set[str]:
+    """Run the platform setup for one device and return the created sensor keys."""
+    from custom_components.solarman_api.sensor import async_setup_entry
+
+    coordinator = MagicMock()
+    coordinator.data = {} if bucket is None else {_SN: bucket}
+    entry = MagicMock()
+    entry.runtime_data.coordinator = coordinator
+    entry.runtime_data.devices = [{"deviceSn": _SN, "deviceType": device_type}]
+    added: list[SolarmanSensor] = []
+    await async_setup_entry(MagicMock(), entry, added.extend)
+    return {sensor.entity_description.key for sensor in added}
+
+
+async def test_only_sensors_the_device_reports_are_created() -> None:
+    """A key the model never sends would be unknown forever, so it isn't created."""
+    keys = await _created_keys(
+        "INVERTER", {"_collectionTime": 1, "DP1": "100", "B_T1": "25.00"}
+    )
+    assert keys == {"DP1", "B_T1"}
+
+
+async def test_derived_sensors_need_all_their_inputs() -> None:
+    """The energy-balance sensors are created only when every input is reported."""
+    bucket = {"TPG": "0", "PG_Pt1": "0", "B_P1": "0", "E_Puse_t1": "0"}
+    keys = await _created_keys("INVERTER", bucket)
+    assert DERIVED_SELF_CONSUMPTION_POWER in keys
+    assert DERIVED_SELF_CONSUMPTION_TOTAL not in keys
+
+
+async def test_all_sensors_created_without_a_first_reading() -> None:
+    """A device whose first poll failed keeps the full set, as before."""
+    keys = await _created_keys("INVERTER", None)
+    assert keys == {d.key for d in SENSORS_BY_DEVICE_TYPE["INVERTER"]}
+
+
+async def test_micro_inverter_gets_inverter_sensors() -> None:
+    """Micro inverters (MI + MW3 logger) used to get no entities at all."""
+    keys = await _created_keys(
+        "MICRO_INVERTER", {"_collectionTime": 1, "DP1": "120", "Etdy_ge1": "1.2"}
+    )
+    assert keys == {"DP1", "Etdy_ge1"}
+
+
+def test_home_consumption_falls_back_to_load_power_loc() -> None:
+    """SOLAMICO inverters report the house load as LOAD_POWER_LOC."""
+    assert _entity_value("E_Puse_t1", {"LOAD_POWER_LOC": "812"}) == 812.0
+    assert (
+        _entity_value("E_Puse_t1", {"E_Puse_t1": "500", "LOAD_POWER_LOC": "812"})
+        == 500.0
+    )
+
+
+async def test_home_consumption_created_from_load_power_loc() -> None:
+    """The fallback key alone is enough to create the sensor."""
+    keys = await _created_keys("INVERTER", {"LOAD_POWER_LOC": "812"})
+    assert keys == {"E_Puse_t1"}

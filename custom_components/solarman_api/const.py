@@ -76,6 +76,10 @@ class SolarmanSensorDescription(SensorEntityDescription):
     # sensor.py reads the untouched API bucket and keeps Solarman's signs.
     invert: bool = False
 
+    # Other API keys that carry the same reading on some inverter models, tried
+    # in order when `key` is missing. The entity keeps `key` in its unique ID.
+    fallback_keys: tuple[str, ...] = ()
+
 
 _POWER_W = dict(
     native_unit_of_measurement=UnitOfPower.WATT,
@@ -141,6 +145,18 @@ INVERTER_SENSORS: Final[tuple[SolarmanSensorDescription, ...]] = (
         **_POWER_W,
     ),
     SolarmanSensorDescription(
+        key="DP3",
+        translation_key="pv3_power",
+        name="PV3 power",
+        **_POWER_W,
+    ),
+    SolarmanSensorDescription(
+        key="DP4",
+        translation_key="pv4_power",
+        name="PV4 power",
+        **_POWER_W,
+    ),
+    SolarmanSensorDescription(
         key="T_AC_OP",
         translation_key="ac_output_power",
         name="AC output power",
@@ -181,6 +197,8 @@ INVERTER_SENSORS: Final[tuple[SolarmanSensorDescription, ...]] = (
         key="E_Puse_t1",
         translation_key="home_consumption_power",
         name="Home consumption power",
+        # SOLAMICO inverters report the house load as LOAD_POWER_LOC
+        fallback_keys=("LOAD_POWER_LOC",),
         **_POWER_W,
     ),
     SolarmanSensorDescription(
@@ -363,6 +381,27 @@ INVERTER_SENSORS: Final[tuple[SolarmanSensorDescription, ...]] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         **_TEMPERATURE_C,
     ),
+    SolarmanSensorDescription(
+        key="INV_T0",
+        translation_key="inverter_temperature",
+        name="Inverter temperature",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        **_TEMPERATURE_C,
+    ),
+    SolarmanSensorDescription(
+        key="AC_T",
+        translation_key="ac_temperature",
+        name="AC temperature",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        **_TEMPERATURE_C,
+    ),
+    SolarmanSensorDescription(
+        key="B_T1",
+        translation_key="battery_temperature",
+        name="Battery temperature",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        **_TEMPERATURE_C,
+    ),
     # ----- DIAGNOSTIC: insulation / DC bus (unit returned by API; pass-through) -----
     SolarmanSensorDescription(
         key="IPV",
@@ -502,5 +541,21 @@ BATTERY_SENSORS: Final[tuple[SolarmanSensorDescription, ...]] = (
 
 SENSORS_BY_DEVICE_TYPE: Final[dict[str, tuple[SolarmanSensorDescription, ...]]] = {
     "INVERTER": INVERTER_SENSORS,
+    # Micro inverters (MI with an MW3 logger) report the same kind of
+    # production keys as string inverters
+    "MICRO_INVERTER": INVERTER_SENSORS,
     "BATTERY": BATTERY_SENSORS,
+}
+
+# Inputs of each derived sensor: it's only created when all of them are reported.
+DERIVED_INPUTS: Final[dict[str, tuple[str, ...]]] = {
+    DERIVED_SELF_CONSUMPTION_POWER: ("TPG", "PG_Pt1", "B_P1", "E_Puse_t1"),
+    DERIVED_SELF_CONSUMPTION_TOTAL: (
+        "Et_ge0",
+        "Et_pu1",
+        "t_dcg_n1",
+        "Et_use1",
+        "t_gc1",
+        "t_cg_n1",
+    ),
 }

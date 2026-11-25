@@ -19,7 +19,12 @@ from .api import (
     SolarmanClient,
     SolarmanRateLimitError,
 )
-from .const import DEFAULT_UPDATE_INTERVAL, DOMAIN, LIFETIME_CUMULATIVE_KEYS
+from .const import (
+    DEFAULT_UPDATE_INTERVAL,
+    DOMAIN,
+    LIFETIME_CUMULATIVE_KEYS,
+    SENSORS_BY_DEVICE_TYPE,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,7 +52,13 @@ class SolarmanCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         )
         self.client = client
         self.station_id = station_id
-        self.devices = devices
+        # Only devices with sensors are polled: a COLLECTOR's currentData
+        # isn't shown anywhere and only spends the account's request quota.
+        self.devices = [
+            device
+            for device in devices
+            if device.get("deviceType") in SENSORS_BY_DEVICE_TYPE
+        ]
 
     async def _async_update_data(self) -> dict[str, dict[str, Any]]:
         tasks = [

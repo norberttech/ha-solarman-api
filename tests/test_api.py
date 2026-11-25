@@ -274,3 +274,70 @@ async def test_json_parse_error_raises_api_error(session):
         m.post(CURRENT_URL, body="<html>nope</html>", status=200)
         with pytest.raises(SolarmanApiError):
             await client.current_data("SN1")
+
+
+@pytest.mark.asyncio
+async def test_concurrent_401s_reauthenticate_once(session):
+    """Devices polled together all get 401 when the token expires; one re-auth."""
+    import asyncio
+
+    from aioresponses import CallbackResult
+
+    client = _make_client(session)
+    client._access_token = "stale"
+    token_requests = 0
+
+    def _token(url, **kwargs):
+        nonlocal token_requests
+        token_requests += 1
+        return CallbackResult(
+            payload={"success": True, "access_token": f"fresh{token_requests}"}
+        )
+
+    stale_seen = 0
+    all_rejected = asyncio.Event()
+
+    async def _current(url, **kwargs):
+        nonlocal stale_seen
+        if kwargs["headers"]["Authorization"] == "bearer stale":
+            # Answer only once all three polls are in flight with the old token
+            stale_seen += 1
+            if stale_seen == 3:
+                all_rejected.set()
+            await all_rejected.wait()
+            return CallbackResult(status=401, payload={"msg": "expired"})
+        return CallbackResult(payload={"success": True, "dataList": []})
+
+    with aioresponses() as m:
+        m.post(TOKEN_URL, callback=_token, repeat=True)
+        m.post(CURRENT_URL, callback=_current, repeat=True)
+        results = await asyncio.gather(
+            client.current_data("SN1"),
+            client.current_data("SN2"),
+            client.current_data("SN3"),
+        )
+
+    assert token_requests == 1
+    assert results == [{"success": True, "dataList": []}] * 3
+
+
+@pytest.mark.asyncio
+async def test_429_with_long_retry_after_raises_without_sleeping(monkeypatch, session):
+    """A long Retry-After isn't slept through inside a coordinator update."""
+    client = _make_client(session)
+    client._access_token = "tok"
+
+    sleeps: list[float] = []
+
+    async def _fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("custom_components.solarman_api.api.asyncio.sleep", _fake_sleep)
+
+    with aioresponses() as m:
+        m.post(CURRENT_URL, status=429, headers={"Retry-After": "3600"}, body="rl")
+        with pytest.raises(SolarmanRateLimitError) as exc_info:
+            await client.current_data("SN1")
+
+    assert sleeps == []
+    assert exc_info.value.retry_after == 3600

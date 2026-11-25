@@ -11,6 +11,10 @@ import aiohttp
 
 from .const import BASE_URL, DEFAULT_HEADERS, REQUEST_TIMEOUT
 
+# A 429 asking for a longer wait than this is passed straight to the caller
+# instead of holding the update (and every device polled with it) open.
+MAX_RETRY_AFTER = 60
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -52,6 +56,9 @@ class SolarmanClient:
         self._email = email
         self._password = password
         self._access_token: str | None = None
+        # Devices are polled concurrently; when the token expires they all get
+        # 401 at once and only one of them should fetch a new token.
+        self._auth_lock = asyncio.Lock()
 
     @property
     def access_token(self) -> str | None:
@@ -147,14 +154,15 @@ class SolarmanClient:
         uses `_raw_request` directly and does its own success check.)
         """
         if self._access_token is None:
-            await self.authenticate()
+            await self._reauthenticate(None)
+        token = self._access_token
         try:
             resp = await self._raw_request(
                 method, path, json=json, params=params, authed=True
             )
         except _Unauthorized:
             _LOGGER.info("Solarman token rejected; re-authenticating once")
-            await self.authenticate()
+            await self._reauthenticate(token)
             try:
                 resp = await self._raw_request(
                     method, path, json=json, params=params, authed=True
@@ -164,6 +172,8 @@ class SolarmanClient:
                     "Re-authentication did not restore access"
                 ) from err
         except _RateLimited as err:
+            if err.retry_after > MAX_RETRY_AFTER:
+                raise SolarmanRateLimitError(err.retry_after) from err
             _LOGGER.warning(
                 "Solarman rate-limited; sleeping %ss then retrying", err.retry_after
             )
@@ -178,6 +188,12 @@ class SolarmanClient:
         if resp.get("success") is False:
             raise SolarmanApiError(0, f"{resp.get('code')}: {resp.get('msg')}")
         return resp
+
+    async def _reauthenticate(self, rejected_token: str | None) -> None:
+        """Get a new token unless another request already replaced the rejected one."""
+        async with self._auth_lock:
+            if self._access_token is None or self._access_token == rejected_token:
+                await self.authenticate()
 
     async def _raw_request(
         self,

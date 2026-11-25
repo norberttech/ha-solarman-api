@@ -206,3 +206,16 @@ async def test_collection_time_uses_response_not_startup_value(
     # device list had collectionTime=1_700_000_000; response wins.
     assert coordinator.data["SN_INV"]["_collectionTime"] == 1_800_000_000
     assert coordinator.data["SN_BAT"]["_collectionTime"] == 1_800_000_300
+
+
+async def test_collectors_are_not_polled(hass: HomeAssistant) -> None:
+    """A COLLECTOR has no sensors, so its currentData isn't fetched."""
+    client = MagicMock()
+    client.current_data = AsyncMock(return_value={"dataList": []})
+    devices = [*_devices(), {"deviceSn": "SN_LOG", "deviceType": "COLLECTOR"}]
+    coordinator = SolarmanCoordinator(hass, _entry(hass), client, 1, devices)
+
+    await coordinator.async_refresh()
+
+    polled = {call.args[0] for call in client.current_data.await_args_list}
+    assert polled == {"SN_INV", "SN_BAT"}

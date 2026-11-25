@@ -13,6 +13,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    DERIVED_INPUTS,
     DERIVED_KEY_PREFIX,
     DERIVED_SELF_CONSUMPTION_POWER,
     DERIVED_SELF_CONSUMPTION_TOTAL,
@@ -50,9 +51,25 @@ async def async_setup_entry(
         descriptors = SENSORS_BY_DEVICE_TYPE.get(device.get("deviceType", ""))
         if not descriptors:
             continue
+        bucket = (coordinator.data or {}).get(str(device["deviceSn"]))
         for descriptor in descriptors:
-            entities.append(SolarmanSensor(coordinator, device, descriptor))
+            if bucket is None or _is_reported(descriptor, bucket):
+                entities.append(SolarmanSensor(coordinator, device, descriptor))
     async_add_entities(entities)
+
+
+def _is_reported(
+    description: SolarmanSensorDescription, bucket: dict[str, Any]
+) -> bool:
+    """Whether this device's currentData carries the sensor's reading.
+
+    Models report different key sets, so a sensor for a key the device never
+    sends would stay unknown for good. Without a first reading for the device
+    (it failed at setup), every sensor is created as before.
+    """
+    if description.key.startswith(DERIVED_KEY_PREFIX):
+        return all(key in bucket for key in DERIVED_INPUTS[description.key])
+    return any(key in bucket for key in (description.key, *description.fallback_keys))
 
 
 class SolarmanSensor(CoordinatorEntity[SolarmanCoordinator], SensorEntity):
@@ -122,10 +139,13 @@ class SolarmanSensor(CoordinatorEntity[SolarmanCoordinator], SensorEntity):
         bucket = (self.coordinator.data or {}).get(self._device_sn)
         if bucket is None:
             return None
-        key = self.entity_description.key
-        if key.startswith(DERIVED_KEY_PREFIX):
-            return _derive_value(key, bucket)
-        return bucket.get(key)
+        desc = self.entity_description
+        if desc.key.startswith(DERIVED_KEY_PREFIX):
+            return _derive_value(desc.key, bucket)
+        for key in (desc.key, *desc.fallback_keys):
+            if key in bucket:
+                return bucket[key]
+        return None
 
 
 def _to_float(raw: Any, precision: int | None) -> float | None:

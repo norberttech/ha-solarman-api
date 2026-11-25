@@ -176,8 +176,10 @@ In the HA UI: **Settings -> Devices & services -> Add Integration -> "Solarman A
 Fill the four fields with the same values from `.env`. On success:
 
 - One config entry is created (`Solarman (<station name>)`).
-- Two HA Devices appear: the inverter (37 entities) and the battery (14 entities). `COLLECTOR` sticks are intentionally
-  skipped.
+- Two HA Devices appear: the inverter and the battery. `COLLECTOR` sticks are intentionally skipped. Micro inverters
+  get the inverter's sensors.
+- Only sensors the device actually reports in its first `currentData` reply are created, since models use different
+  keys. A sensor whose key starts appearing later (a battery added, say) shows up after reloading the integration.
 - Primary energy/power sensors are tagged for the Energy Dashboard; per-phase, temperature, and status entities land
   under the Diagnostic section.
 

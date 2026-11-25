@@ -50,8 +50,11 @@ Two services expose `/device/v1.0/historical`:
 
 - **`solarman_api.import_historical_statistics`** - backfills HA long-term statistics (solar production, grid
   import/export, home consumption, battery charge/discharge) so the Energy Dashboard shows real history. Defaults to
-  the last 180 days. Call it once after installing and again whenever you want to fill gaps. Idempotent -
-  already-imported days are skipped. Solarman caps each query at 31 days so wider ranges are chunked automatically.
+  the last 180 days. Call it once after installing, or again to fill gaps. Each run clears those sensors'
+  statistics and rebuilds them from the window it fetched, so statistics older than the window's start are
+  removed: pick a window that reaches back as far as you want to keep. If any part of the window can't be
+  fetched, nothing is cleared or imported. Solarman caps each query at 31 days so wider ranges are chunked
+  automatically.
 - **`solarman_api.fetch_historical`** - returns the raw `paramDataList` for an arbitrary date range / time
   granularity (5-min, daily, monthly) without touching statistics. Useful for ad-hoc queries and automations.
 

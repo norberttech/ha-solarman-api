@@ -41,9 +41,11 @@ import_historical_statistics:
   description: >
     Backfill HA long-term statistics (for the Energy Dashboard) from the
     Solarman historical endpoint. Covers: solar production, grid import/export,
-    home consumption, battery charge/discharge. Safe to re-run; already-imported
-    days are skipped. Solarman caps each query at 31 days, so wider ranges are
-    chunked automatically.
+    home consumption, battery charge/discharge. Each run replaces those sensors'
+    statistics with the fetched window, so statistics older than the window's
+    start are removed. If any part of the window can't be fetched, nothing is
+    changed. Solarman caps each query at 31 days, so wider ranges are chunked
+    automatically.
   fields:
     days:
       name: Days to backfill

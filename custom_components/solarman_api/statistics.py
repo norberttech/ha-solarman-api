@@ -39,6 +39,7 @@ from homeassistant.components.recorder.models import (
 )
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
@@ -324,14 +325,12 @@ async def _fetch_daily_window(
                 time_type=2,
             )
         except SolarmanApiError as err:
-            _LOGGER.warning(
-                "Historical daily request failed for %s..%s: %s",
-                window_start,
-                window_end,
-                err,
-            )
-            window_start = window_end + timedelta(days=1)
-            continue
+            # The import clears the sensors' statistics before writing, so going
+            # on without this window would leave those days empty for good.
+            raise HomeAssistantError(
+                f"Solarman historical data for {window_start}..{window_end} "
+                f"could not be read, so nothing was imported: {err}"
+            ) from err
         entries.extend(response.get("paramDataList") or [])
         window_start = window_end + timedelta(days=1)
     return entries
@@ -348,8 +347,10 @@ async def _fetch_today_5min(
             device_sn, today.isoformat(), today.isoformat(), time_type=1
         )
     except SolarmanApiError as err:
-        _LOGGER.warning("Today 5-min request failed for %s: %s", today, err)
-        return []
+        raise HomeAssistantError(
+            f"Solarman data for today ({today}) could not be read, "
+            f"so nothing was imported: {err}"
+        ) from err
     return list(response.get("paramDataList") or [])
 
 

@@ -278,3 +278,41 @@ def test_max_window_days_respects_api_cap() -> None:
     # historical queries with timeType=2. Keep this <= 31 so each chunk is
     # guaranteed to hit the capped ceiling rather than silently return nothing.
     assert 1 <= MAX_WINDOW_DAYS <= 31
+
+
+async def test_failed_window_aborts_before_clearing_statistics(hass) -> None:
+    """A failed historical request must not leave cleared, half-imported statistics."""
+    from datetime import date
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    import pytest
+
+    from homeassistant.exceptions import HomeAssistantError
+
+    from custom_components.solarman_api.api import SolarmanApiError
+    from custom_components.solarman_api.statistics import (
+        async_import_historical_statistics,
+    )
+
+    client = MagicMock()
+    client.historical = AsyncMock(
+        side_effect=[{"paramDataList": []}, SolarmanApiError(0, "timeout after 30s")]
+    )
+    devices = [{"deviceSn": "SN_INV", "deviceType": "INVERTER"}]
+
+    with (
+        patch(
+            "custom_components.solarman_api.statistics._clear_statistics_and_wait",
+            new=AsyncMock(),
+        ) as clear,
+        pytest.raises(HomeAssistantError, match="nothing was imported"),
+    ):
+        await async_import_historical_statistics(
+            hass,
+            client,
+            devices,
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 3, 1),
+        )
+
+    clear.assert_not_awaited()
